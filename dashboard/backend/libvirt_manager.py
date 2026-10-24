@@ -6,9 +6,16 @@ import subprocess
 import re
 import os
 import json
-from .config import CONFIG_DIR
+import time
+import threading
+from .config import CONFIG_DIR, ISOS_DIR, VMS_DIR
 
 INSTANCES_META_FILE = os.path.join(CONFIG_DIR, "instances_meta.json")
+_SNAPSHOT_JOBS = {}
+
+def get_snapshot_job(job_id: str) -> dict:
+    """Return snapshot export job details and logs"""
+    return _SNAPSHOT_JOBS.get(job_id)
 
 def load_meta() -> dict:
     """Load metadata saved during provisioning"""
@@ -177,3 +184,107 @@ def undefine_domain(name: str) -> dict:
             save_meta(meta)
         return {"success": True, "message": f"Instance {name} and its disks deleted"}
     return {"success": False, "error": err or out}
+
+def create_vm_snapshot_async(name: str, params: dict) -> dict:
+    """Create a reusable base OS template image from an existing VM disk"""
+    raw_snap_name = params.get("snapshot_name", "").strip() or f"{name}-snapshot.img"
+    if not (raw_snap_name.endswith(".img") or raw_snap_name.endswith(".qcow2")):
+        raw_snap_name += ".img"
+        
+    target_path = os.path.join(ISOS_DIR, raw_snap_name)
+    auto_restart = params.get("auto_restart", True)
+
+    job_id = f"snap_{int(time.time())}_{name}"
+    job = {
+        "id": job_id,
+        "vm_name": name,
+        "action": "snapshot",
+        "status": "queued",
+        "logs": [f"[{time.strftime('%H:%M:%S')}] Snapshot job queued for instance '{name}' -> '{raw_snap_name}'..."],
+        "started_at": time.time(),
+        "finished_at": None,
+        "error": None
+    }
+    _SNAPSHOT_JOBS[job_id] = job
+
+    def _worker():
+        def log(msg):
+            timestamp = time.strftime('%H:%M:%S')
+            job["logs"].append(f"[{timestamp}] {msg}")
+
+        try:
+            # 1. Locate primary disk path
+            log(f"Finding virtual disk for instance '{name}'...")
+            disk_path = None
+            ok, out, _ = run_virsh(["domblklist", name])
+            if ok and out:
+                for line in out.splitlines():
+                    parts = line.strip().split()
+                    if len(parts) >= 2 and ("/data/" in parts[1] or ".qcow2" in parts[1]):
+                        disk_path = parts[1]
+                        break
+
+            if not disk_path:
+                default_path = os.path.join(VMS_DIR, f"{name}-vda.qcow2")
+                if os.path.exists(default_path):
+                    disk_path = default_path
+
+            if not disk_path or not os.path.exists(disk_path):
+                raise RuntimeError(f"Could not locate virtual disk for instance '{name}'.")
+
+            log(f"Identified source disk: {disk_path}")
+
+            # 2. Check VM power state
+            job["status"] = "checking"
+            ok, info_out, _ = run_virsh(["dominfo", name])
+            was_running = False
+            if ok and "running" in info_out.lower():
+                was_running = True
+                log("VM is currently running. Performing graceful shutdown to ensure filesystem consistency...")
+                run_virsh(["shutdown", name])
+                # Wait up to 15s for shutdown
+                for _ in range(15):
+                    time.sleep(1)
+                    ok2, state_out, _ = run_virsh(["domstate", name])
+                    if ok2 and "shut off" in state_out.lower():
+                        break
+
+            # 3. Convert & compress to /data/isos/<snapshot_name>
+            job["status"] = "converting"
+            log(f"Converting and compressing QCOW2 image to '{target_path}'...")
+            proc = subprocess.Popen(
+                ["qemu-img", "convert", "-O", "qcow2", "-c", "-p", disk_path, target_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True
+            )
+            for line in proc.stdout:
+                log(line.strip())
+            proc.wait()
+
+            if proc.returncode != 0:
+                raise RuntimeError(f"qemu-img convert failed with code {proc.returncode}")
+
+            log("Disk converted successfully.")
+
+            # 4. Restart VM if requested
+            if was_running and auto_restart:
+                log(f"Restarting instance '{name}'...")
+                run_virsh(["start", name])
+
+            # 5. Refresh isos pool
+            log("Refreshing Libvirt isos storage pool...")
+            run_virsh(["pool-refresh", "isos"])
+
+            job["status"] = "completed"
+            job["finished_at"] = time.time()
+            log(f"✓ Snapshot template '{raw_snap_name}' created in /data/isos! You can now deploy new VMs with it.")
+        except Exception as e:
+            job["status"] = "failed"
+            job["finished_at"] = time.time()
+            job["error"] = str(e)
+            log(f"ERROR: {e}")
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    return {"success": True, "job_id": job_id}

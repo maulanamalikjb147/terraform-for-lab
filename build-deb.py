@@ -144,6 +144,11 @@ def build_data_tar() -> bytes:
             "./opt/tf-vps-panel/not-tfgen.sh",
             mode=0o755
         )
+        add_file(
+            os.path.join(REPO_ROOT, "bake-docker-image.sh"),
+            "./opt/tf-vps-panel/bake-docker-image.sh",
+            mode=0o755
+        )
         add_tree(
             os.path.join(REPO_ROOT, "functionlib"),
             "./opt/tf-vps-panel/functionlib"

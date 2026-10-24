@@ -61,6 +61,7 @@ http://<IP-SERVER-UBUNTU>:8080/
    - Status badge real-time (Running 🟢, Stopped 🔴).
    - Tombol Power: **Start**, **Stop (ACPI Shutdown)**, **Reboot**, **Force Stop (Kill)**.
    - **VNC & SSH Console:** Langsung menampilkan display port VNC (e.g. 5900) dan perintah SSH one-click.
+   - **📸 1-Click Snapshot to Template Image:** Mengambil snapshot disk VM dan menyimpannya sebagai golden image baru di `/data/isos/` sehingga Anda bisa membuat VM-VM baru langsung dari snapshot tersebut!
    - **Terminate / Destroy:** Menghapus VM dan storage virtual disk secara bersih via Terraform & virsh.
 
 2. **⚡ Deploy VPS (Creation Wizard):**
@@ -80,8 +81,11 @@ http://<IP-SERVER-UBUNTU>:8080/
      - Dashboard akan menjalankan `virt-customize` secara offline dan menampilkan log prosesnya secara real-time!
      - Image hasil modifikasi langsung tersimpan di `/data/isos` dan siap dipilih saat Deploy VM.
 
-4. **🌐 Networks & IPAM Tracker:**
-   - Memantau subnet `10.10.10.0/24`, bridge `virbr10`, dan tabel alokasi IP address agar tidak terjadi konflik IP.
+4. **🌐 Multi-Network & IPAM Tracker:**
+   - **Multi-Network Management:** Mendukung banyak subnet sekaligus (misal `net-10.10.10`, `net-10.20.10`, dll).
+   - **+ 1-Click Add Virtual Network:** Buat network baru langsung dari Dashboard! Cukup masukkan nama network, interface bridge (misal `virbr20`), dan gateway IP. Dashboard otomatis membuat file `.xml`, menjalankan `virsh net-define`, `virsh net-autostart`, `virsh net-start`, serta konfigurasi IPTables NAT masquerade.
+   - **Auto-Discovery:** Jika Anda membuat network manual via file `.xml` dan `virsh` di CLI seperti dulu, dashboard secara otomatis mendeteksinya tanpa perlu restart.
+   - **Dynamic Network Deploy:** Pilih network subnet saat deploy instance di Wizard, IP address otomatis teralokasi di subnet yang dipilih.
 
 5. **📊 Host Health Monitoring:**
    - Real-time CPU Usage %, RAM Usage, KVM Driver, dan status Libvirt daemon.

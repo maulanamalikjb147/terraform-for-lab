@@ -378,6 +378,7 @@ function renderInstances(instances) {
             ` : `
               <button class="btn btn-primary btn-sm" onclick="startInstance('${inst.name}')" title="Power On">▶ Start</button>
             `}
+            <button class="btn btn-outline btn-sm" onclick="openSnapshotModal('${inst.name}')" title="Create Snapshot & Template Image">📸 Snapshot</button>
             <button class="btn btn-outline btn-sm text-danger" onclick="confirmDeleteInstance('${inst.name}')" title="Destroy Instance">🗑</button>
           </div>
         </td>
@@ -444,6 +445,72 @@ async function rebootInstance(name) {
   }
 }
 
+function openSnapshotModal(vmName) {
+  document.getElementById('snap-source-vm').value = vmName;
+  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  document.getElementById('snap-target-name').value = `${vmName}-snapshot-${dateStr}.img`;
+  document.getElementById('snap-auto-restart').checked = true;
+  document.getElementById('modal-snapshot').style.display = 'flex';
+}
+
+function closeSnapshotModal() {
+  document.getElementById('modal-snapshot').style.display = 'none';
+}
+
+async function submitVmSnapshot() {
+  const name = document.getElementById('snap-source-vm').value;
+  const snapshot_name = document.getElementById('snap-target-name').value.trim();
+  const auto_restart = document.getElementById('snap-auto-restart').checked;
+
+  if (!snapshot_name) {
+    showToast('Please specify a snapshot name', 'error');
+    return;
+  }
+
+  closeSnapshotModal();
+  openLogModal(`Snapshotting Instance: ${name} -> ${snapshot_name}`);
+
+  const res = await apiRequest(`/api/instances/${name}/snapshot`, {
+    method: 'POST',
+    body: JSON.stringify({ snapshot_name, auto_restart })
+  });
+
+  if (res.success && res.job_id) {
+    pollSnapshotJob(res.job_id);
+  } else {
+    showToast(`Snapshot error: ${res.error}`, 'error');
+    const term = document.getElementById('terminal-output');
+    term.textContent = `Error:\n${res.error}`;
+  }
+}
+
+function pollSnapshotJob(jobId) {
+  const term = document.getElementById('terminal-output');
+  const statusText = document.getElementById('log-status-text');
+  let startTime = Date.now();
+
+  const timer = setInterval(async () => {
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    document.getElementById('log-elapsed-time').textContent = `Elapsed: ${elapsed}s`;
+
+    const job = await apiRequest(`/api/instances/snapshot-jobs/${jobId}`);
+    if (!job || !job.id) return;
+
+    statusText.textContent = `Status: ${job.status.toUpperCase()} (qemu-img convert)`;
+    term.textContent = (job.logs || []).join('\n');
+    term.scrollTop = term.scrollHeight;
+
+    if (job.status === 'completed') {
+      clearInterval(timer);
+      showToast(`Snapshot ${job.vm_name} exported successfully to /data/isos!`, 'success');
+      refreshDashboard(true);
+    } else if (job.status === 'failed') {
+      clearInterval(timer);
+      showToast(`Snapshot failed: ${job.error}`, 'error');
+    }
+  }, 1000);
+}
+
 function confirmDeleteInstance(name) {
   STATE.deleteTargetVm = name;
   document.getElementById('delete-vm-name').textContent = name;
@@ -490,7 +557,7 @@ function renderImagesCatalog(catalog, tasks = {}) {
     return `
       <div class="os-card ${isActive}" onclick="selectOs('${img.filename}', '${img.name}')">
         <span class="os-card-badge ${badgeClass}">${badgeText}</span>
-        <div style="font-size: 24px;">${img.distro === 'debian' ? '🌀' : '🐧'}</div>
+        <div style="font-size: 24px;">${img.distro === 'debian' ? '🌀' : img.distro === 'snapshot' ? '📸' : '🐧'}</div>
         <span class="os-card-title">${img.name}</span>
         <span class="os-card-sub">${img.filename} • ~${img.size_estimate}</span>
       </div>
@@ -613,12 +680,28 @@ function updateSummary() {
 }
 
 async function fetchNextIP() {
-  const res = await apiRequest('/api/networks');
+  const netSelect = document.getElementById('deploy-network-select');
+  const netName = netSelect ? netSelect.value : '';
+  const url = netName ? `/api/networks/${encodeURIComponent(netName)}` : '/api/networks';
+  const res = await apiRequest(url);
+  const nextIp = res ? (res.next_available_ip || (res.current && res.current.next_available_ip)) : null;
+  if (nextIp) {
+    document.getElementById('deploy-ip').value = nextIp;
+    updateSummary();
+    showToast(`Auto-assigned next IP: ${nextIp}`, 'info');
+  }
+}
+
+async function onDeployNetworkChange() {
+  const netSelect = document.getElementById('deploy-network-select');
+  const netName = netSelect ? netSelect.value : '';
+  if (!netName) return;
+  const res = await apiRequest(`/api/networks/${encodeURIComponent(netName)}`);
   if (res && res.next_available_ip) {
     document.getElementById('deploy-ip').value = res.next_available_ip;
-    updateSummary();
-    showToast(`Auto-assigned next IP: ${res.next_available_ip}`, 'info');
+    document.getElementById('deploy-ip').placeholder = res.next_available_ip;
   }
+  updateSummary();
 }
 
 function generateRandomPass() {
@@ -654,6 +737,8 @@ async function submitDeployment() {
   const vcpus = parseInt(document.getElementById('input-vcpus').value);
   const ramGb = parseInt(document.getElementById('input-ram').value);
   const diskGb = parseInt(document.getElementById('input-disk').value);
+  const netSelect = document.getElementById('deploy-network-select');
+  const network = netSelect ? netSelect.value : 'net-10.10.10';
   const ip = document.getElementById('deploy-ip').value.trim();
   const ssh_key = document.getElementById('deploy-ssh-key').value.trim();
   const password = document.getElementById('deploy-password').value;
@@ -668,6 +753,7 @@ async function submitDeployment() {
     vcpus,
     memory_mb: ramGb * 1024,
     disk_gb: diskGb,
+    network,
     ip,
     ssh_key,
     password,
@@ -861,24 +947,121 @@ function pollCustomizeJob(jobId) {
   }, 1000);
 }
 
+// ==================== NETWORKS & IPAM ====================
+
+async function switchNetwork(netName) {
+  STATE.selectedNetworkName = netName;
+  const res = await apiRequest(`/api/networks/${encodeURIComponent(netName)}`);
+  if (res) {
+    renderNetworkDetail(res);
+    if (STATE.networksList) {
+      renderNetworkPills(STATE.networksList);
+    }
+  }
+}
+
+function renderNetworkPills(networks) {
+  const pillsBar = document.getElementById('network-pills-bar');
+  if (!pillsBar) return;
+  pillsBar.innerHTML = networks.map(n => `
+    <button class="network-pill-btn ${n.name === STATE.selectedNetworkName ? 'active' : ''}" onclick="switchNetwork('${n.name}')">
+      <span class="status-dot ${n.active ? 'dot-active' : 'dot-inactive'}"></span>
+      <span>${n.name}</span>
+      <small>(${n.subnet || n.bridge})</small>
+    </button>
+  `).join('');
+}
+
 function renderNetwork(data) {
+  let current = null;
+  let networks = [];
+
+  if (data.networks && Array.isArray(data.networks)) {
+    networks = data.networks;
+    STATE.networksList = networks;
+    current = data.current || (networks.length > 0 ? networks[0] : null);
+  } else {
+    current = data;
+  }
+
+  if (current && !STATE.selectedNetworkName) {
+    STATE.selectedNetworkName = current.network_name || current.name;
+  }
+
+  if (networks.length > 0) {
+    renderNetworkPills(networks);
+    
+    // Also populate deploy select
+    const deployNetSelect = document.getElementById('deploy-network-select');
+    if (deployNetSelect) {
+      const currentVal = deployNetSelect.value || (current ? (current.network_name || current.name) : 'net-10.10.10');
+      deployNetSelect.innerHTML = networks.map(n => `
+        <option value="${n.name}" ${n.name === currentVal ? 'selected' : ''}>
+          ${n.name} (${n.bridge} - ${n.subnet})
+        </option>
+      `).join('');
+    }
+  }
+
+  if (current) {
+    renderNetworkDetail(current);
+  }
+}
+
+function renderNetworkDetail(data) {
+  const netName = data.network_name || data.name || 'net-10.10.10';
   STATE.networkInfo = data;
-  document.getElementById('net-title').textContent = data.network_name || 'net-10.10.10';
+  STATE.selectedNetworkName = netName;
+
+  document.getElementById('net-title').textContent = netName;
+  const statusBadge = document.getElementById('net-status-badge');
+  if (statusBadge) {
+    const isActive = data.active;
+    statusBadge.textContent = isActive ? '● Active' : '○ Inactive';
+    statusBadge.className = isActive ? 'text-success' : 'text-danger';
+  }
+
   document.getElementById('net-bridge').textContent = data.bridge || 'virbr10';
+  const modeLabel = document.getElementById('net-mode-label');
+  if (modeLabel) {
+    modeLabel.textContent = `Forward: ${data.forward_mode || 'route'}`;
+  }
+
   document.getElementById('net-gateway').textContent = data.gateway || '10.10.10.1';
-  document.getElementById('net-allocated-count').textContent = `${data.total_allocated || 0} / 253`;
+  const maskLabel = document.getElementById('net-mask-label');
+  if (maskLabel) {
+    maskLabel.textContent = `Netmask: ${data.netmask || '255.255.255.0'}`;
+  }
+
+  document.getElementById('net-allocated-count').textContent = `${data.total_allocated || 0} / ${data.total_ips || 253}`;
   document.getElementById('net-next-ip').textContent = `Next Available: ${data.next_available_ip || '--'}`;
 
+  // Action button: delete network if not default
+  const actionsWrap = document.getElementById('net-actions-wrap');
+  if (actionsWrap) {
+    if (netName !== 'net-10.10.10') {
+      actionsWrap.innerHTML = `
+        <button class="btn btn-outline btn-sm text-danger" onclick="deleteNetwork('${netName}')">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          Delete Network
+        </button>
+      `;
+    } else {
+      actionsWrap.innerHTML = `<span class="badge">Default Network</span>`;
+    }
+  }
+
+  // IPAM Table
   const tbody = document.getElementById('ipam-table-body');
   const allocated = data.allocated_ips || {};
   const ips = Object.keys(allocated).sort((a, b) => {
-    const numA = parseInt(a.split('.')[3]);
-    const numB = parseInt(b.split('.')[3]);
+    const numA = parseInt(a.split('.')[3]) || 0;
+    const numB = parseInt(b.split('.')[3]) || 0;
     return numA - numB;
   });
 
   if (ips.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="text-center py-6 text-muted">No allocated IP addresses.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center py-6 text-muted">No allocated IP addresses in this subnet.</td></tr>`;
     return;
   }
 
@@ -889,11 +1072,97 @@ function renderNetwork(data) {
         <td><strong class="font-mono text-cyan">${ip}</strong></td>
         <td><strong>${info.vm}</strong></td>
         <td><span class="badge">${info.status}</span></td>
-        <td>${info.vcpus ? `${info.vcpus} vCPU` : '-'}</td>
-        <td>${info.memory_mb ? `${(info.memory_mb/1024).toFixed(1)} GB` : '-'}</td>
+        <td>${info.vcpus && info.vcpus !== '-' ? `${info.vcpus} vCPU` : '-'}</td>
+        <td>${info.memory_mb && info.memory_mb !== '-' ? `${(info.memory_mb/1024).toFixed(1)} GB` : '-'}</td>
       </tr>
     `;
   }).join('');
+}
+
+function openAddNetworkModal() {
+  updateNetworkXmlPreview();
+  document.getElementById('modal-add-network').style.display = 'flex';
+}
+
+function closeAddNetworkModal() {
+  document.getElementById('modal-add-network').style.display = 'none';
+}
+
+function updateNetworkXmlPreview() {
+  const name = document.getElementById('net-input-name').value.trim() || 'net-10.20.10';
+  const bridge = document.getElementById('net-input-bridge').value.trim() || 'virbr20';
+  const gateway = document.getElementById('net-input-gateway').value.trim() || '10.20.10.1';
+  const netmask = document.getElementById('net-input-netmask').value.trim() || '255.255.255.0';
+  const mode = document.getElementById('net-input-mode').value;
+
+  const fwd = mode !== 'isolated' ? `  <forward mode='${mode}'/>\n` : '';
+  const xml = `<network>
+  <name>${name}</name>
+${fwd}  <bridge name='${bridge}' stp='on' delay='0'/>
+  <domain name='network'/>
+  <ip address='${gateway}' netmask='${netmask}'>
+  </ip>
+</network>`;
+
+  const preview = document.getElementById('net-xml-preview');
+  if (preview) {
+    preview.textContent = xml;
+  }
+}
+
+async function submitCreateNetwork() {
+  const name = document.getElementById('net-input-name').value.trim();
+  const bridge = document.getElementById('net-input-bridge').value.trim();
+  const gateway = document.getElementById('net-input-gateway').value.trim();
+  const netmask = document.getElementById('net-input-netmask').value.trim();
+  const forward_mode = document.getElementById('net-input-mode').value;
+  const enable_nat = document.getElementById('net-input-nat').checked;
+
+  if (!name || !bridge || !gateway) {
+    showToast('Network Name, Bridge, and Gateway IP are required.', 'error');
+    return;
+  }
+
+  showToast('Creating virtual network in Libvirt...', 'info');
+  const res = await apiRequest('/api/networks/create', {
+    method: 'POST',
+    body: JSON.stringify({
+      name,
+      bridge,
+      gateway,
+      netmask,
+      forward_mode,
+      enable_nat
+    })
+  });
+
+  if (res.success) {
+    showToast(res.message || 'Virtual network created successfully!', 'success');
+    closeAddNetworkModal();
+    STATE.selectedNetworkName = name;
+    refreshDashboard(true);
+  } else {
+    showToast(`Error: ${res.error}`, 'error');
+  }
+}
+
+async function deleteNetwork(name) {
+  if (!confirm(`Are you sure you want to delete virtual network '${name}'?\n\nThis will remove the virsh definition and deactivate the bridge.`)) {
+    return;
+  }
+
+  showToast(`Deleting network ${name}...`, 'info');
+  const res = await apiRequest(`/api/networks/${encodeURIComponent(name)}`, {
+    method: 'DELETE'
+  });
+
+  if (res.success) {
+    showToast(`Network '${name}' deleted successfully.`, 'success');
+    STATE.selectedNetworkName = 'net-10.10.10';
+    refreshDashboard(true);
+  } else {
+    showToast(`Failed to delete network: ${res.error}`, 'error');
+  }
 }
 
 // ==================== CONSOLE MODAL ====================

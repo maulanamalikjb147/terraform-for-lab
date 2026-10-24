@@ -186,6 +186,24 @@ def get_catalog() -> list:
             "local_info": local_images.get(item["filename"]),
             "download_task": active_task
         })
+
+    # Add any custom / snapshot images found in /data/isos
+    popular_filenames = {item["filename"] for item in POPULAR_IMAGES}
+    for fname, info in local_images.items():
+        if fname not in popular_filenames:
+            catalog.append({
+                "id": f"custom-{fname}",
+                "name": f"Snapshot: {fname}",
+                "filename": fname,
+                "url": "",
+                "size_estimate": info["size_display"],
+                "distro": "snapshot",
+                "default_user": "student",
+                "downloaded": True,
+                "local_info": info,
+                "download_task": None
+            })
+
     return catalog
 
 def start_image_download(url: str, filename: str) -> dict:

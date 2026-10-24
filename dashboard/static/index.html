@@ -372,8 +372,8 @@
                 <div class="form-grid-2">
                   <div class="form-group">
                     <label>Virtual Network Subnet</label>
-                    <select class="form-control" id="deploy-network-select" disabled>
-                      <option value="net-10.10.10">net-10.10.10 (Bridge: virbr10 - 10.10.10.0/24)</option>
+                    <select class="form-control font-mono" id="deploy-network-select" onchange="onDeployNetworkChange()">
+                      <option value="net-10.10.10">net-10.10.10 (virbr10 - 10.10.10.0/24)</option>
                     </select>
                   </div>
                   <div class="form-group">
@@ -621,8 +621,19 @@
           <div class="content-header">
             <div>
               <h1 class="page-title">Networks & IPAM Tracker</h1>
-              <p class="page-desc">Inspect Libvirt virtual network bridges and IP address allocation map.</p>
+              <p class="page-desc">Inspect Libvirt virtual network bridges, manage subnets, and track IP allocations.</p>
             </div>
+            <div class="content-header-actions">
+              <button class="btn btn-primary" onclick="openAddNetworkModal()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>+ Add Virtual Network</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Network Switcher Bar -->
+          <div class="network-pills-bar" id="network-pills-bar">
+            <!-- Dynamically populated network buttons -->
           </div>
 
           <div class="overview-grid">
@@ -637,14 +648,14 @@
               <div class="metric-info">
                 <span class="metric-title">Bridge Device</span>
                 <h3 id="net-bridge">virbr10</h3>
-                <small class="text-muted">Forward: route / nat</small>
+                <small class="text-muted" id="net-mode-label">Forward: route</small>
               </div>
             </div>
             <div class="metric-card">
               <div class="metric-info">
                 <span class="metric-title">Gateway Address</span>
                 <h3 id="net-gateway">10.10.10.1</h3>
-                <small class="text-muted">Netmask: 255.255.255.0</small>
+                <small class="text-muted" id="net-mask-label">Netmask: 255.255.255.0</small>
               </div>
             </div>
             <div class="metric-card">
@@ -657,8 +668,11 @@
           </div>
 
           <div class="panel-card mt-4">
-            <div class="panel-header">
+            <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center;">
               <h3>IP Address Allocation Table</h3>
+              <div id="net-actions-wrap">
+                <!-- Delete Network button rendered for non-default networks -->
+              </div>
             </div>
             <div class="table-responsive">
               <table class="data-table">
@@ -927,6 +941,122 @@
       <div class="modal-footer">
         <button class="btn btn-outline" onclick="closeCustomizeModal()">Cancel</button>
         <button class="btn btn-primary" onclick="submitImageCustomization()">⚡ Start Customization / Bake Image</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: TAKE SNAPSHOT TO TEMPLATE ==================== -->
+  <div class="modal-overlay" id="modal-snapshot" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <span style="font-size: 20px;">📸</span>
+          <h3 id="modal-snapshot-title">Create Snapshot & Template Image</h3>
+        </div>
+        <button class="btn-close" onclick="closeSnapshotModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted" style="margin-bottom: 16px;">
+          Export this instance's current disk state into a compressed template image in <code>/data/isos</code>. You can then launch new VMs using this exact image!
+        </p>
+
+        <div class="form-group">
+          <label>Source Instance</label>
+          <input type="text" class="form-control font-mono" id="snap-source-vm" readonly>
+        </div>
+
+        <div class="form-group">
+          <label>New Template Image Name</label>
+          <input type="text" class="form-control font-mono" id="snap-target-name" placeholder="my-vm-backup.img">
+          <small class="text-muted">Will be saved to <code>/data/isos/</code> and available in the Deploy VPS Wizard.</small>
+        </div>
+
+        <div class="checkbox-row mt-3">
+          <label class="custom-checkbox">
+            <input type="checkbox" id="snap-auto-restart" checked>
+            <span class="checkbox-box"></span>
+            <span>Gracefully stop VM during export (then restart) for filesystem consistency</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeSnapshotModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitVmSnapshot()">📸 Create Snapshot Image</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: ADD VIRTUAL NETWORK ==================== -->
+  <div class="modal-overlay" id="modal-add-network" style="display: none;">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <span style="font-size: 20px;">🌐</span>
+          <h3>Add Virtual Network (Libvirt & NAT)</h3>
+        </div>
+        <button class="btn-close" onclick="closeAddNetworkModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted" style="margin-bottom: 16px;">
+          Define a new virtual bridge network in Libvirt. Dashboard will generate the XML definition, register it via <code>virsh net-define</code>, autostart it, and configure IPTables NAT masquerade automatically.
+        </p>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label>Network Name</label>
+            <input type="text" class="form-control font-mono" id="net-input-name" placeholder="net-10.20.10" value="net-10.20.10" oninput="updateNetworkXmlPreview()">
+            <small class="text-muted">Convention: <code>net-10.X.Y</code> or custom name.</small>
+          </div>
+
+          <div class="form-group">
+            <label>Bridge Device Name</label>
+            <input type="text" class="form-control font-mono" id="net-input-bridge" placeholder="virbr20" value="virbr20" oninput="updateNetworkXmlPreview()">
+            <small class="text-muted">Linux bridge device (e.g. <code>virbr20</code>).</small>
+          </div>
+        </div>
+
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label>Host Gateway IP</label>
+            <input type="text" class="form-control font-mono" id="net-input-gateway" placeholder="10.20.10.1" value="10.20.10.1" oninput="updateNetworkXmlPreview()">
+            <small class="text-muted">Host bridge IP address for routing.</small>
+          </div>
+
+          <div class="form-group">
+            <label>Netmask</label>
+            <input type="text" class="form-control font-mono" id="net-input-netmask" placeholder="255.255.255.0" value="255.255.255.0" oninput="updateNetworkXmlPreview()">
+            <small class="text-muted">Subnet mask (<code>255.255.255.0</code> = /24).</small>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Forwarding Mode</label>
+          <select class="form-control" id="net-input-mode" onchange="updateNetworkXmlPreview()">
+            <option value="route" selected>Routed (mode='route') - Direct bridged L3 routing with host</option>
+            <option value="nat">NAT (mode='nat') - Libvirt built-in NAT</option>
+            <option value="isolated">Isolated LAN - Internal VMs only, no outbound internet</option>
+          </select>
+        </div>
+
+        <div class="checkbox-row mt-3">
+          <label class="custom-checkbox">
+            <input type="checkbox" id="net-input-nat" checked>
+            <span class="checkbox-box"></span>
+            <span>Enable IPTables NAT Masquerade (Allows VMs to access the Internet)</span>
+          </label>
+        </div>
+
+        <div class="form-group mt-4">
+          <label style="display: flex; justify-content: space-between;">
+            <span>Generated Libvirt XML Definition</span>
+            <small class="text-muted">Auto-generated</small>
+          </label>
+          <pre class="terminal-box font-mono" id="net-xml-preview" style="max-height: 140px; font-size: 11px; padding: 10px;"></pre>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeAddNetworkModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitCreateNetwork()">+ Create & Activate Network</button>
       </div>
     </div>
   </div>
