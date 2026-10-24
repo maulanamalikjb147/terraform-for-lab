@@ -1229,15 +1229,26 @@ async function deleteNetwork(name) {
 
 // ==================== CONSOLE MODAL ====================
 
+let _currentConsoleVm = '';
+let _currentConsolePort = 5900;
+
 function openConsoleModal(name, ip, port) {
+  _currentConsoleVm = name;
+  _currentConsolePort = port || 5900;
   const hasIp = ip && ip !== 'Pending DHCP' && ip !== 'Static / No Agent' && ip !== 'Offline';
   const displayIp = hasIp ? ip : '<IP_VM>';
   document.getElementById('modal-console-title').textContent = `Console: ${name}`;
   document.getElementById('console-ssh-cmd').textContent = `ssh student@${displayIp}`;
   document.getElementById('console-host').textContent = window.location.hostname || 'YOUR_HOST_IP';
-  document.getElementById('console-port').textContent = port;
-  document.getElementById('console-vnc-cmd').textContent = `vncviewer ${window.location.hostname || 'YOUR_HOST_IP'}:${port}`;
+  document.getElementById('console-port').textContent = _currentConsolePort;
+  document.getElementById('console-vnc-cmd').textContent = `vncviewer ${window.location.hostname || 'YOUR_HOST_IP'}:${_currentConsolePort}`;
   document.getElementById('modal-console').style.display = 'flex';
+}
+
+function launchWebConsole() {
+  const token = localStorage.getItem('token') || '';
+  const url = `/console.html?vm=${encodeURIComponent(_currentConsoleVm)}&port=${encodeURIComponent(_currentConsolePort)}&token=${encodeURIComponent(token)}`;
+  window.open(url, `vnc_${_currentConsoleVm}`, 'width=1024,height=768,menubar=no,status=no,toolbar=no');
 }
 
 function closeConsoleModal() {

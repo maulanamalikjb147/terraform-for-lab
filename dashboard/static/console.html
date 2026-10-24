@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CloudLab Web Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      background: #090d16;
+      color: #f1f5f9;
+      font-family: 'Plus Jakarta Sans', -apple-system, sans-serif;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .console-header {
+      height: 48px;
+      background: #111827;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      user-select: none;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-icon {
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(135deg, #2563EB, #7C3AED);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .vm-title {
+      font-weight: 700;
+      font-size: 14px;
+      letter-spacing: -0.2px;
+    }
+    .status-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .status-badge.connecting {
+      background: rgba(245, 158, 11, 0.15);
+      color: #FBBF24;
+      border: 1px solid rgba(245, 158, 11, 0.3);
+    }
+    .status-badge.connected {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34D399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .status-badge.disconnected {
+      background: rgba(239, 68, 68, 0.15);
+      color: #F87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .dot.pulse {
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity: 0.4; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.2); }
+      100% { opacity: 0.4; transform: scale(0.9); }
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn {
+      background: #1F2937;
+      color: #F3F4F6;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .btn:hover {
+      background: #374151;
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+    .btn-primary {
+      background: #2563EB;
+      border-color: #3B82F6;
+    }
+    .btn-primary:hover {
+      background: #1D4ED8;
+    }
+    #screen-container {
+      flex: 1;
+      width: 100%;
+      height: calc(100vh - 48px);
+      background: #000;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #screen {
+      width: 100%;
+      height: 100%;
+    }
+    #screen canvas {
+      outline: none;
+    }
+    .overlay-message {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(17, 24, 39, 0.95);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 24px 32px;
+      text-align: center;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+      z-index: 10;
+      display: none;
+    }
+    .overlay-message h3 {
+      margin: 0 0 8px 0;
+      font-size: 16px;
+    }
+    .overlay-message p {
+      margin: 0 0 16px 0;
+      font-size: 13px;
+      color: #94A3B8;
+    }
+  </style>
+</head>
+<body>
+
+  <header class="console-header">
+    <div class="header-left">
+      <div class="brand-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>
+      </div>
+      <div>
+        <span class="vm-title" id="vm-name-label">Instance Console</span>
+      </div>
+      <div class="status-badge connecting" id="status-pill">
+        <span class="dot pulse"></span>
+        <span id="status-text">Connecting...</span>
+      </div>
+    </div>
+
+    <div class="header-actions">
+      <button class="btn" onclick="sendCad()" title="Send Ctrl+Alt+Delete">
+        ⌨️ Ctrl+Alt+Del
+      </button>
+      <button class="btn" onclick="toggleScaling()" id="btn-scale">
+        🔍 Scale: Fit
+      </button>
+      <button class="btn" onclick="toggleFullscreen()">
+        ⛶ Fullscreen
+      </button>
+      <button class="btn" onclick="reconnect()">
+        🔄 Reconnect
+      </button>
+    </div>
+  </header>
+
+  <main id="screen-container">
+    <div id="screen"></div>
+
+    <div class="overlay-message" id="overlay-msg">
+      <h3 id="overlay-title">Disconnected</h3>
+      <p id="overlay-desc">The VNC console connection was closed.</p>
+      <button class="btn btn-primary" onclick="reconnect()">Reconnect Console</button>
+    </div>
+  </main>
+
+  <script type="module">
+    import RFB from 'https://cdn.jsdelivr.net/npm/@novnc/novnc@1.5.0/lib/rfb.js';
+
+    let rfb = null;
+    let isScaling = true;
+
+    const params = new URLSearchParams(window.location.search);
+    const vmName = params.get('vm') || 'VM';
+    const vncPort = params.get('port') || '5900';
+    const token = params.get('token') || localStorage.getItem('token') || '';
+
+    document.getElementById('vm-name-label').textContent = `${vmName} (Port :${vncPort})`;
+    document.title = `Console: ${vmName} - CloudLab VPS`;
+
+    function updateStatus(state, text) {
+      const pill = document.getElementById('status-pill');
+      const textEl = document.getElementById('status-text');
+      pill.className = `status-badge ${state}`;
+      textEl.textContent = text;
+      
+      const dot = pill.querySelector('.dot');
+      if (state === 'connecting') {
+        dot.className = 'dot pulse';
+      } else {
+        dot.className = 'dot';
+      }
+    }
+
+    function connect() {
+      document.getElementById('overlay-msg').style.display = 'none';
+      updateStatus('connecting', 'Connecting...');
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/api/vnc/ws?port=${encodeURIComponent(vncPort)}&token=${encodeURIComponent(token)}`;
+
+      const screenContainer = document.getElementById('screen');
+      screenContainer.innerHTML = '';
+
+      try {
+        rfb = new RFB(screenContainer, wsUrl);
+
+        rfb.scaleViewport = isScaling;
+        rfb.resizeSession = false;
+
+        rfb.addEventListener('connect', () => {
+          updateStatus('connected', 'Connected');
+          document.getElementById('overlay-msg').style.display = 'none';
+        });
+
+        rfb.addEventListener('disconnect', (e) => {
+          updateStatus('disconnected', 'Disconnected');
+          const overlay = document.getElementById('overlay-msg');
+          overlay.style.display = 'block';
+          if (!e.detail.clean) {
+            document.getElementById('overlay-desc').textContent = 'Connection interrupted. Please verify that the VM is running.';
+          } else {
+            document.getElementById('overlay-desc').textContent = 'Console session closed.';
+          }
+        });
+
+        rfb.addEventListener('securityfailure', (e) => {
+          updateStatus('disconnected', 'Security Failure');
+          document.getElementById('overlay-desc').textContent = 'VNC authentication failed.';
+          document.getElementById('overlay-msg').style.display = 'block';
+        });
+      } catch (err) {
+        updateStatus('disconnected', 'Error');
+        document.getElementById('overlay-desc').textContent = err.message;
+        document.getElementById('overlay-msg').style.display = 'block';
+      }
+    }
+
+    window.sendCad = function() {
+      if (rfb) {
+        rfb.sendCtrlAltDel();
+      }
+    };
+
+    window.toggleScaling = function() {
+      isScaling = !isScaling;
+      if (rfb) {
+        rfb.scaleViewport = isScaling;
+      }
+      document.getElementById('btn-scale').textContent = isScaling ? '🔍 Scale: Fit' : '🔍 Scale: 100%';
+    };
+
+    window.toggleFullscreen = function() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    };
+
+    window.reconnect = function() {
+      if (rfb) {
+        try { rfb.disconnect(); } catch (e) {}
+      }
+      connect();
+    };
+
+    // Auto connect on load
+    connect();
+  </script>
+</body>
+</html>

@@ -36,6 +36,7 @@ from backend.network_manager import (
 from backend.terraform_runner import (
     deploy_instance_async, destroy_instance_async, list_jobs, get_job
 )
+from backend.vnc_ws import bridge_vnc_websocket
 
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
@@ -139,6 +140,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+
+        # VNC WebSocket Tunneling (RFC 6455 Websockify)
+        if path == "/api/vnc/ws":
+            params = urllib.parse.parse_qs(parsed.query)
+            token = params.get("token", [""])[0] or self.get_auth_token()
+            if not verify_token(token):
+                self.send_error(401, "Unauthorized VNC session")
+                return
+            try:
+                port_num = int(params.get("port", ["5900"])[0])
+            except (ValueError, TypeError):
+                port_num = 5900
+            return bridge_vnc_websocket(self, vnc_port=port_num)
         
         if not path.startswith("/api/"):
             return self.serve_static(path)
