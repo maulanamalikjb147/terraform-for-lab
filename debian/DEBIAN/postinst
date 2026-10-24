@@ -69,21 +69,34 @@ echo "[6/8] Initializing KVM storage pools..."
 mkdir -p /data/isos /data/vms
 chmod 755 /data/isos /data/vms
 
-# Define and start pools in libvirt
-virsh pool-define-as vms dir - - - - "/data/vms" 2>/dev/null || true
-virsh pool-define-as isos dir - - - - "/data/isos" 2>/dev/null || true
+# Define and start pools in libvirt idempotently
+if ! virsh pool-info vms >/dev/null 2>&1; then
+    virsh pool-define-as vms dir - - - - "/data/vms" 2>/dev/null || true
+fi
+if ! virsh pool-info isos >/dev/null 2>&1; then
+    virsh pool-define-as isos dir - - - - "/data/isos" 2>/dev/null || true
+fi
 virsh pool-autostart vms 2>/dev/null || true
 virsh pool-autostart isos 2>/dev/null || true
-virsh pool-start vms 2>/dev/null || true
-virsh pool-start isos 2>/dev/null || true
+
+if ! virsh pool-list --name 2>/dev/null | grep -qx "vms"; then
+    virsh pool-start vms 2>/dev/null || true
+fi
+if ! virsh pool-list --name 2>/dev/null | grep -qx "isos"; then
+    virsh pool-start isos 2>/dev/null || true
+fi
 
 # 7. Setup Virtual Network (net-10.10.10) & IPTables NAT
 echo "[7/8] Configuring virtual network (net-10.10.10) & NAT masquerade..."
 NET_XML="/opt/tf-vps-panel/config/net-10-10-10.xml"
 if [ -f "$NET_XML" ]; then
-    virsh net-define "$NET_XML" 2>/dev/null || true
+    if ! virsh net-info net-10.10.10 >/dev/null 2>&1; then
+        virsh net-define "$NET_XML" 2>/dev/null || true
+    fi
     virsh net-autostart net-10.10.10 2>/dev/null || true
-    virsh net-start net-10.10.10 2>/dev/null || true
+    if ! virsh net-list --name 2>/dev/null | grep -qx "net-10.10.10"; then
+        virsh net-start net-10.10.10 2>/dev/null || true
+    fi
 fi
 
 # Enable IPv4 forwarding

@@ -102,13 +102,18 @@ def build_data_tar() -> bytes:
             ti.gid = 0
             tar.addfile(ti)
 
-        def add_tree(src_dir, dest_prefix):
+        def add_tree(src_dir, dest_prefix, skip_files=None, skip_dirs=None):
+            if skip_files is None:
+                skip_files = set()
+            if skip_dirs is None:
+                skip_dirs = set()
             for root, dirs, files in os.walk(src_dir):
+                dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".git") and d != "__pycache__"]
                 rel = os.path.relpath(root, src_dir)
                 target_dir = dest_prefix if rel == "." else os.path.join(dest_prefix, rel)
                 add_dir(target_dir)
                 for f in sorted(files):
-                    if f.startswith(".git") or f.endswith(".pyc") or f == "__pycache__":
+                    if f.startswith(".git") or f.endswith(".pyc") or f == "__pycache__" or f in skip_files or f.endswith(".DS_Store"):
                         continue
                     s = os.path.join(root, f)
                     d = os.path.join(target_dir, f)
@@ -117,6 +122,8 @@ def build_data_tar() -> bytes:
         # Base directories
         add_dir("./opt")
         add_dir("./opt/tf-vps-panel")
+        add_dir("./opt/tf-vps-panel/instances")
+        add_dir("./opt/tf-vps-panel/config")
         add_dir("./etc")
         add_dir("./etc/systemd")
         add_dir("./etc/systemd/system")
@@ -127,9 +134,14 @@ def build_data_tar() -> bytes:
         add_dir("./data/isos")
         add_dir("./data/vms")
 
-        # 1. Dashboard application
+        # 1. Dashboard application (exclude dynamic runtime state to guarantee idempotency)
         dashboard_dir = os.path.join(REPO_ROOT, "dashboard")
-        add_tree(dashboard_dir, "./opt/tf-vps-panel")
+        add_tree(
+            dashboard_dir,
+            "./opt/tf-vps-panel",
+            skip_files={"users.json", "jobs.json", "instances_meta.json", "config.json"},
+            skip_dirs={"instances"}
+        )
 
         # Ensure server.py is executable
         add_file(
