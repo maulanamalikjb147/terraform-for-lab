@@ -139,7 +139,7 @@ def build_data_tar() -> bytes:
         add_tree(
             dashboard_dir,
             "./opt/tf-vps-panel",
-            skip_files={"users.json", "jobs.json", "instances_meta.json", "config.json"},
+            skip_files={"users.json", "jobs.json", "instances_meta.json", "config.json", "sessions.json"},
             skip_dirs={"instances"}
         )
 

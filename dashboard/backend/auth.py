@@ -8,10 +8,36 @@ import json
 import time
 import hashlib
 import secrets
-from .config import USERS_FILE, ensure_directories
+from .config import USERS_FILE, CONFIG_DIR, ensure_directories
 
 TOKEN_EXPIRY_SECONDS = 86400 * 7  # 7 days session
+SESSIONS_FILE = os.path.join(CONFIG_DIR, "sessions.json")
 _ACTIVE_SESSIONS = {}  # token -> {"username": username, "expires": timestamp}
+
+def _load_sessions():
+    """Load persistent sessions from disk"""
+    if os.path.exists(SESSIONS_FILE):
+        try:
+            with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                now = time.time()
+                return {k: v for k, v in data.items() if v.get("expires", 0) > now}
+        except Exception:
+            return {}
+    return {}
+
+def _save_sessions(sessions: dict):
+    """Save active sessions to disk"""
+    ensure_directories()
+    try:
+        with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump(sessions, f)
+        try:
+            os.chmod(SESSIONS_FILE, 0o600)
+        except Exception:
+            pass
+    except Exception:
+        pass
 
 def _hash_password(password: str, salt: str = None) -> tuple:
     """Hash password using PBKDF2-HMAC-SHA256 with 100,000 iterations"""
@@ -84,6 +110,7 @@ def login(username: str, password: str) -> dict:
         "role": user.get("role", "admin"),
         "expires": expires
     }
+    _save_sessions(_ACTIVE_SESSIONS)
     
     return {
         "success": True,
@@ -97,20 +124,30 @@ def login(username: str, password: str) -> dict:
 
 def verify_token(token: str) -> dict:
     """Check if session token is valid and active"""
+    global _ACTIVE_SESSIONS
     if not token:
         return None
+    if not _ACTIVE_SESSIONS:
+        _ACTIVE_SESSIONS = _load_sessions()
     session = _ACTIVE_SESSIONS.get(token)
     if not session:
-        return None
-    if time.time() > session["expires"]:
+        # Retry reload from disk in case another thread/worker wrote it
+        _ACTIVE_SESSIONS = _load_sessions()
+        session = _ACTIVE_SESSIONS.get(token)
+        if not session:
+            return None
+    if time.time() > session.get("expires", 0):
         del _ACTIVE_SESSIONS[token]
+        _save_sessions(_ACTIVE_SESSIONS)
         return None
     return session
 
 def logout(token: str) -> bool:
     """Invalidate session token"""
+    global _ACTIVE_SESSIONS
     if token in _ACTIVE_SESSIONS:
         del _ACTIVE_SESSIONS[token]
+        _save_sessions(_ACTIVE_SESSIONS)
         return True
     return False
 

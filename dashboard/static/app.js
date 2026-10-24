@@ -1246,7 +1246,7 @@ function openConsoleModal(name, ip, port) {
 }
 
 function launchWebConsole() {
-  const token = localStorage.getItem('token') || '';
+  const token = STATE.token || localStorage.getItem('tf_vps_token') || localStorage.getItem('token') || '';
   const url = `/console.html?vm=${encodeURIComponent(_currentConsoleVm)}&port=${encodeURIComponent(_currentConsolePort)}&token=${encodeURIComponent(token)}`;
   window.open(url, `vnc_${_currentConsoleVm}`, 'width=1024,height=768,menubar=no,status=no,toolbar=no');
 }

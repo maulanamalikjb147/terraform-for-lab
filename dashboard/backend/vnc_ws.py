@@ -1,10 +1,10 @@
 """
 Pure Python 3 WebSocket-to-TCP VNC Proxy (Websockify)
-Bridges browser WebSocket connections to QEMU/KVM VNC TCP sockets.
+Bi-directional bridging between browser WebSocket and QEMU/KVM VNC TCP socket.
 Zero external dependencies.
 """
 import socket
-import select
+import threading
 import struct
 import base64
 import hashlib
@@ -14,7 +14,7 @@ import time
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 def encode_ws_frame(payload: bytes, opcode: int = 0x2) -> bytes:
-    """Encode raw bytes into RFC 6455 unmasked WebSocket frame (server to client)"""
+    """Encode raw bytes into RFC 6455 unmasked WebSocket binary frame"""
     length = len(payload)
     hdr = bytearray([0x80 | (opcode & 0x0F)])
     if length <= 125:
@@ -28,13 +28,16 @@ def encode_ws_frame(payload: bytes, opcode: int = 0x2) -> bytes:
     return bytes(hdr) + payload
 
 def recv_exact(sock: socket.socket, num_bytes: int) -> bytes:
-    """Read exact number of bytes from socket"""
+    """Read exact number of bytes from blocking socket"""
     buf = bytearray()
     while len(buf) < num_bytes:
-        chunk = sock.recv(num_bytes - len(buf))
-        if not chunk:
+        try:
+            chunk = sock.recv(num_bytes - len(buf))
+            if not chunk:
+                return None
+            buf.extend(chunk)
+        except Exception:
             return None
-        buf.extend(chunk)
     return bytes(buf)
 
 def decode_ws_frame(sock: socket.socket):
@@ -77,7 +80,7 @@ def decode_ws_frame(sock: socket.socket):
 def bridge_vnc_websocket(handler, vnc_port: int, vnc_host: str = "127.0.0.1"):
     """
     Performs RFC 6455 handshake on HTTP handler and bi-directionally bridges
-    WebSocket traffic to local QEMU VNC TCP port.
+    WebSocket traffic to local QEMU VNC TCP port using dual worker threads.
     """
     key = handler.headers.get("Sec-WebSocket-Key", "").strip()
     if not key:
@@ -87,7 +90,7 @@ def bridge_vnc_websocket(handler, vnc_port: int, vnc_host: str = "127.0.0.1"):
     # 1. Connect to QEMU VNC backend
     try:
         vnc_sock = socket.create_connection((vnc_host, vnc_port), timeout=5)
-        vnc_sock.setblocking(False)
+        vnc_sock.settimeout(60.0)
     except Exception as e:
         handler.send_error(502, f"Failed to connect to VNC display on port {vnc_port}: {str(e)}")
         return
@@ -108,88 +111,61 @@ def bridge_vnc_websocket(handler, vnc_port: int, vnc_host: str = "127.0.0.1"):
 
     client_sock = handler.connection
     client_sock.sendall(response.encode("utf-8"))
-    client_sock.setblocking(False)
+    client_sock.settimeout(60.0)
 
-    # 3. Bi-directional forwarding loop using select
-    # We buffer partial frames for clean non-blocking streaming
-    vnc_buf = bytearray()
-    client_closed = False
-    vnc_closed = False
+    stop_event = threading.Event()
 
-    try:
-        while not client_closed and not vnc_closed:
-            rlist = [client_sock, vnc_sock]
-            wlist = []
-            if vnc_buf:
-                wlist.append(vnc_sock)
-
-            readable, writable, exceptional = select.select(rlist, wlist, rlist, 30.0)
-
-            if exceptional:
-                break
-
-            # Handle writes to VNC
-            if vnc_sock in writable and vnc_buf:
+    def pipe_vnc_to_client():
+        """Reads raw VNC framebuffer updates and writes binary WebSocket frames to client"""
+        try:
+            while not stop_event.is_set():
                 try:
-                    sent = vnc_sock.send(vnc_buf)
-                    vnc_buf = vnc_buf[sent:]
-                except BlockingIOError:
-                    pass
-                except Exception:
-                    vnc_closed = True
-                    break
-
-            # Handle reads from VNC -> Client
-            if vnc_sock in readable:
-                try:
-                    raw = vnc_sock.recv(16384)
-                    if not raw:
-                        vnc_closed = True
+                    data = vnc_sock.recv(16384)
+                    if not data:
                         break
-                    # Send as unmasked binary WebSocket frame
-                    frame = encode_ws_frame(raw, opcode=0x2)
+                    frame = encode_ws_frame(data, opcode=0x2)
                     client_sock.sendall(frame)
-                except BlockingIOError:
-                    pass
+                except socket.timeout:
+                    continue
                 except Exception:
-                    client_closed = True
                     break
+        finally:
+            stop_event.set()
+            try:
+                client_sock.close()
+            except Exception:
+                pass
 
-            # Handle reads from Client -> VNC
-            if client_sock in readable:
-                # We need blocking read for full frame or catch blocking
-                client_sock.setblocking(True)
-                opcode, payload = decode_ws_frame(client_sock)
-                client_sock.setblocking(False)
-
-                if opcode is None or opcode == 0x8:  # Connection Close
-                    client_closed = True
-                    # Echo close frame
-                    try:
-                        client_sock.sendall(encode_ws_frame(b"", opcode=0x8))
-                    except Exception:
-                        pass
+    def pipe_client_to_vnc():
+        """Reads WebSocket frames from client, decodes unmasked payload, and writes to VNC"""
+        try:
+            while not stop_event.is_set():
+                try:
+                    opcode, payload = decode_ws_frame(client_sock)
+                    if opcode is None or opcode == 0x8:  # Close frame or EOF
+                        break
+                    elif opcode == 0x9:  # Ping
+                        client_sock.sendall(encode_ws_frame(payload, opcode=0xA))
+                    elif opcode in (0x1, 0x2):  # Binary / Text
+                        if payload:
+                            vnc_sock.sendall(payload)
+                except socket.timeout:
+                    continue
+                except Exception:
                     break
-                elif opcode == 0x9:  # Ping
-                    client_sock.sendall(encode_ws_frame(payload, opcode=0xA))
-                elif opcode in (0x1, 0x2):  # Binary / Text
-                    if payload:
-                        vnc_buf.extend(payload)
-                        # Try immediate flush
-                        try:
-                            sent = vnc_sock.send(vnc_buf)
-                            vnc_buf = vnc_buf[sent:]
-                        except Exception:
-                            pass
+        finally:
+            stop_event.set()
+            try:
+                vnc_sock.close()
+            except Exception:
+                pass
 
-    except Exception as e:
-        pass
-    finally:
-        try:
-            vnc_sock.close()
-        except Exception:
-            pass
-        try:
-            client_sock.close()
-        except Exception:
-            pass
+    t_vnc = threading.Thread(target=pipe_vnc_to_client, daemon=True)
+    t_client = threading.Thread(target=pipe_client_to_vnc, daemon=True)
+
+    t_vnc.start()
+    t_client.start()
+
+    # Block handler until session ends
+    t_vnc.join()
+    t_client.join()

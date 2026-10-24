@@ -211,7 +211,7 @@
     const params = new URLSearchParams(window.location.search);
     const vmName = params.get('vm') || 'VM';
     const vncPort = params.get('port') || '5900';
-    const token = params.get('token') || localStorage.getItem('token') || '';
+    const token = params.get('token') || localStorage.getItem('tf_vps_token') || localStorage.getItem('token') || '';
 
     document.getElementById('vm-name-label').textContent = `${vmName} (Port :${vncPort})`;
     document.title = `Console: ${vmName} - CloudLab VPS`;
@@ -236,6 +236,7 @@
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsUrl = `${protocol}//${window.location.host}/api/vnc/ws?port=${encodeURIComponent(vncPort)}&token=${encodeURIComponent(token)}`;
+      console.log('Connecting to VNC WebSocket via:', wsUrl);
 
       const screenContainer = document.getElementById('screen');
       screenContainer.innerHTML = '';
@@ -247,27 +248,31 @@
         rfb.resizeSession = false;
 
         rfb.addEventListener('connect', () => {
+          console.log('VNC Connected successfully!');
           updateStatus('connected', 'Connected');
           document.getElementById('overlay-msg').style.display = 'none';
         });
 
         rfb.addEventListener('disconnect', (e) => {
+          console.warn('VNC Disconnected:', e);
           updateStatus('disconnected', 'Disconnected');
           const overlay = document.getElementById('overlay-msg');
           overlay.style.display = 'block';
           if (!e.detail.clean) {
-            document.getElementById('overlay-desc').textContent = 'Connection interrupted. Please verify that the VM is running.';
+            document.getElementById('overlay-desc').textContent = 'Koneksi terputus. Pastikan VM sedang running dan port VNC aktif.';
           } else {
             document.getElementById('overlay-desc').textContent = 'Console session closed.';
           }
         });
 
         rfb.addEventListener('securityfailure', (e) => {
+          console.error('VNC Security Failure:', e);
           updateStatus('disconnected', 'Security Failure');
           document.getElementById('overlay-desc').textContent = 'VNC authentication failed.';
           document.getElementById('overlay-msg').style.display = 'block';
         });
       } catch (err) {
+        console.error('Error initializing RFB:', err);
         updateStatus('disconnected', 'Error');
         document.getElementById('overlay-desc').textContent = err.message;
         document.getElementById('overlay-msg').style.display = 'block';
