@@ -986,6 +986,49 @@
     </div>
   </div>
 
+  <!-- ==================== MODAL: SPARSIFY & SHRINK VM DISK ==================== -->
+  <div class="modal-overlay" id="modal-sparsify" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <span style="font-size: 20px;">🗜️</span>
+          <h3 id="modal-sparsify-title">Sparsify & Shrink VM Disk</h3>
+        </div>
+        <button class="btn-close" onclick="closeSparsifyModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted" style="margin-bottom: 16px;">
+          Reclaim host storage by running <code>virt-sparsify</code> on this instance's QCOW2 disk. It inspects the filesystem, removes deleted dirty blocks, zeros unallocated sectors, and shrinks the file on <code>/data/vms/</code> to its true minimal size.
+        </p>
+
+        <div class="form-group">
+          <label>Target Instance</label>
+          <input type="text" class="form-control font-mono" id="sparsify-vm-name" readonly>
+        </div>
+
+        <div class="checkbox-row mt-3">
+          <label class="custom-checkbox">
+            <input type="checkbox" id="sparsify-compress">
+            <span class="checkbox-box"></span>
+            <span>Enable QCOW2 cluster compression (<code>--compress</code>) for maximum disk shrinkage</span>
+          </label>
+        </div>
+
+        <div class="checkbox-row mt-3">
+          <label class="custom-checkbox">
+            <input type="checkbox" id="sparsify-auto-restart" checked>
+            <span class="checkbox-box"></span>
+            <span>Gracefully stop VM during compaction and automatically restart when completed</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeSparsifyModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitSparsify()">🗜️ Run virt-sparsify</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ==================== MODAL: ADD VIRTUAL NETWORK ==================== -->
   <div class="modal-overlay" id="modal-add-network" style="display: none;">
     <div class="modal-card modal-lg">

@@ -23,7 +23,8 @@ from backend.auth import (
 from backend.system_stats import get_system_summary
 from backend.libvirt_manager import (
     list_domains, start_domain, stop_domain, force_stop_domain,
-    reboot_domain, get_domain_details, create_vm_snapshot_async, get_snapshot_job
+    reboot_domain, get_domain_details, create_vm_snapshot_async, get_snapshot_job,
+    sparsify_vm_disk_async, get_sparsify_job
 )
 from backend.storage_manager import (
     list_iso_images, get_catalog, start_image_download,
@@ -173,6 +174,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if job:
                 return self.send_json(job)
             return self.send_error_json("Snapshot job not found", 404)
+
+        elif path.startswith("/api/instances/sparsify-jobs/"):
+            job_id = path[len("/api/instances/sparsify-jobs/"):]
+            job = get_sparsify_job(job_id)
+            if job:
+                return self.send_json(job)
+            return self.send_error_json("Sparsify job not found", 404)
             
         elif path == "/api/instances/jobs":
             return self.send_json({"jobs": list_jobs()})
@@ -278,6 +286,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if res.get("success"):
                 return self.send_json(res)
             return self.send_error_json(res.get("error", "Snapshot failed"), 400)
+
+        elif path.startswith("/api/instances/") and path.endswith("/sparsify"):
+            name = path.split("/")[3]
+            res = sparsify_vm_disk_async(name, data)
+            if res.get("success"):
+                return self.send_json(res)
+            return self.send_error_json(res.get("error", "Sparsify failed"), 400)
             
         elif path == "/api/images/download":
             url = data.get("url", "").strip()

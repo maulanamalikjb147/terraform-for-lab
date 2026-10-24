@@ -379,6 +379,7 @@ function renderInstances(instances) {
               <button class="btn btn-primary btn-sm" onclick="startInstance('${inst.name}')" title="Power On">▶ Start</button>
             `}
             <button class="btn btn-outline btn-sm" onclick="openSnapshotModal('${inst.name}')" title="Create Snapshot & Template Image">📸 Snapshot</button>
+            <button class="btn btn-outline btn-sm" onclick="openSparsifyModal('${inst.name}')" title="Sparsify & Shrink Disk (virt-sparsify)">🗜️ Shrink</button>
             <button class="btn btn-outline btn-sm text-danger" onclick="confirmDeleteInstance('${inst.name}')" title="Destroy Instance">🗑</button>
           </div>
         </td>
@@ -507,6 +508,67 @@ function pollSnapshotJob(jobId) {
     } else if (job.status === 'failed') {
       clearInterval(timer);
       showToast(`Snapshot failed: ${job.error}`, 'error');
+    }
+  }, 1000);
+}
+
+function openSparsifyModal(vmName) {
+  document.getElementById('sparsify-vm-name').value = vmName;
+  document.getElementById('sparsify-compress').checked = false;
+  document.getElementById('sparsify-auto-restart').checked = true;
+  document.getElementById('modal-sparsify').style.display = 'flex';
+}
+
+function closeSparsifyModal() {
+  document.getElementById('modal-sparsify').style.display = 'none';
+}
+
+async function submitSparsify() {
+  const name = document.getElementById('sparsify-vm-name').value;
+  const compress = document.getElementById('sparsify-compress').checked;
+  const auto_restart = document.getElementById('sparsify-auto-restart').checked;
+
+  closeSparsifyModal();
+  openLogModal(`Sparsifying & Compacting Disk: ${name}`);
+
+  const res = await apiRequest(`/api/instances/${name}/sparsify`, {
+    method: 'POST',
+    body: JSON.stringify({ compress, auto_restart })
+  });
+
+  if (res.success && res.job_id) {
+    pollSparsifyJob(res.job_id);
+  } else {
+    showToast(`Sparsify error: ${res.error}`, 'error');
+    const term = document.getElementById('terminal-output');
+    term.textContent = `Error:\n${res.error}`;
+  }
+}
+
+function pollSparsifyJob(jobId) {
+  const term = document.getElementById('terminal-output');
+  const statusText = document.getElementById('log-status-text');
+  let startTime = Date.now();
+
+  const timer = setInterval(async () => {
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    document.getElementById('log-elapsed-time').textContent = `Elapsed: ${elapsed}s`;
+
+    const job = await apiRequest(`/api/instances/sparsify-jobs/${jobId}`);
+    if (!job || !job.id) return;
+
+    statusText.textContent = `Status: ${job.status.toUpperCase()} (virt-sparsify)`;
+    term.textContent = (job.logs || []).join('\n');
+    term.scrollTop = term.scrollHeight;
+
+    if (job.status === 'completed') {
+      clearInterval(timer);
+      const reclaimed = job.reclaimed_mb ? `${job.reclaimed_mb} MB` : 'storage';
+      showToast(`Disk for ${job.vm_name} shrunk successfully! Reclaimed: ${reclaimed}`, 'success');
+      refreshDashboard(true);
+    } else if (job.status === 'failed') {
+      clearInterval(timer);
+      showToast(`Sparsify failed: ${job.error}`, 'error');
     }
   }, 1000);
 }

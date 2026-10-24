@@ -62,6 +62,7 @@ http://<IP-SERVER-UBUNTU>:8080/
    - Tombol Power: **Start**, **Stop (ACPI Shutdown)**, **Reboot**, **Force Stop (Kill)**.
    - **VNC & SSH Console:** Langsung menampilkan display port VNC (e.g. 5900) dan perintah SSH one-click.
    - **📸 1-Click Snapshot to Template Image:** Mengambil snapshot disk VM dan menyimpannya sebagai golden image baru di `/data/isos/` sehingga Anda bisa membuat VM-VM baru langsung dari snapshot tersebut!
+   - **🗜️ 1-Click Disk Sparsify & Shrink (`virt-sparsify`):** Memadatkan disk QCOW2 instance dan mereclaim ruang kosong di host baremetal secara otomatis menggunakan `virt-sparsify` dengan opsi kompresi cluster, auto-shutdown aman, dan auto-restart.
    - **Terminate / Destroy:** Menghapus VM dan storage virtual disk secara bersih via Terraform & virsh.
 
 2. **⚡ Deploy VPS (Creation Wizard):**
