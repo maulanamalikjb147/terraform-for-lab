@@ -331,7 +331,7 @@ function renderInstances(instances) {
     const isRunning = inst.state === 'running';
     const statusClass = isRunning ? 'status-running' : 'status-stopped';
     const statusDot = isRunning ? '🟢' : '🔴';
-    const ip = inst.ip || 'Pending DHCP';
+    const ip = inst.ip || (isRunning ? 'Static / No Agent' : 'Offline');
     const ramGb = (inst.memory_mb / 1024).toFixed(1);
     const vncPort = inst.vnc_port || 5900;
 
@@ -1230,8 +1230,10 @@ async function deleteNetwork(name) {
 // ==================== CONSOLE MODAL ====================
 
 function openConsoleModal(name, ip, port) {
+  const hasIp = ip && ip !== 'Pending DHCP' && ip !== 'Static / No Agent' && ip !== 'Offline';
+  const displayIp = hasIp ? ip : '<IP_VM>';
   document.getElementById('modal-console-title').textContent = `Console: ${name}`;
-  document.getElementById('console-ssh-cmd').textContent = `ssh student@${ip}`;
+  document.getElementById('console-ssh-cmd').textContent = `ssh student@${displayIp}`;
   document.getElementById('console-host').textContent = window.location.hostname || 'YOUR_HOST_IP';
   document.getElementById('console-port').textContent = port;
   document.getElementById('console-vnc-cmd').textContent = `vncviewer ${window.location.hostname || 'YOUR_HOST_IP'}:${port}`;

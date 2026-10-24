@@ -116,19 +116,98 @@ def get_domain_details(name: str, dom_id: str = "-", state: str = "unknown") -> 
                 except Exception:
                     pass
 
-    # 2. Get IP address
+    # 2. Get IP address (Multi-tier resolution: Agent -> Lease -> ARP -> Config Files)
     ip_address = None
+    # Tier 1: QEMU Guest Agent
     ok_ip, ip_out, _ = run_virsh(["domifaddr", name, "--source", "agent"])
-    if not ok_ip or not ip_out:
-        ok_ip, ip_out, _ = run_virsh(["domifaddr", name, "--source", "lease"])
-        
     if ok_ip and ip_out:
         matches = re.findall(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/\d+", ip_out)
-        if matches:
-            # Filter out 127.0.0.1
+        non_local = [ip for ip in matches if not ip.startswith("127.")]
+        if non_local:
+            ip_address = non_local[0]
+
+    # Tier 2: Libvirt DHCP Lease
+    if not ip_address:
+        ok_ip, ip_out, _ = run_virsh(["domifaddr", name, "--source", "lease"])
+        if ok_ip and ip_out:
+            matches = re.findall(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/\d+", ip_out)
             non_local = [ip for ip in matches if not ip.startswith("127.")]
             if non_local:
                 ip_address = non_local[0]
+
+    # Tier 3: Libvirt ARP Cache
+    if not ip_address:
+        ok_ip, ip_out, _ = run_virsh(["domifaddr", name, "--source", "arp"])
+        if ok_ip and ip_out:
+            matches = re.findall(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", ip_out)
+            non_local = [ip for ip in matches if not ip.startswith("127.") and not ip.endswith(".255")]
+            if non_local:
+                ip_address = non_local[0]
+
+    # Tier 4: Host Neighbor / ARP Table via VM MAC address
+    if not ip_address:
+        ok_mac, mac_out, _ = run_virsh(["domiflist", name])
+        if ok_mac and mac_out:
+            macs = [m.lower() for m in re.findall(r"([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})", mac_out)]
+            if macs:
+                # Check /proc/net/arp
+                if os.path.exists("/proc/net/arp"):
+                    try:
+                        with open("/proc/net/arp", "r", encoding="utf-8") as f:
+                            for line in f:
+                                parts = line.split()
+                                if len(parts) >= 4:
+                                    ip_c, mac_c = parts[0], parts[3].lower()
+                                    if mac_c in macs and not ip_c.startswith("127."):
+                                        ip_address = ip_c
+                                        break
+                    except Exception:
+                        pass
+                # Check `ip neigh` command fallback
+                if not ip_address:
+                    try:
+                        res = subprocess.run(["ip", "neigh"], capture_output=True, text=True, timeout=3)
+                        if res.returncode == 0:
+                            for line in res.stdout.splitlines():
+                                m = re.search(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\s+dev\s+\S+\s+lladdr\s+([0-9a-fA-F:]{17})", line)
+                                if m:
+                                    ip_c, mac_c = m.group(1), m.group(2).lower()
+                                    if mac_c in macs and not ip_c.startswith("127."):
+                                        ip_address = ip_c
+                                        break
+                    except Exception:
+                        pass
+
+    # Tier 5: Static IP from instance configuration files or legacy .txt files
+    if not ip_address:
+        # Search candidate paths for static IP definitions
+        candidates = [
+            os.path.join(INSTANCES_DIR, name, "network1_config.cfg"),
+            os.path.join(INSTANCES_DIR, name, "env.txt"),
+            os.path.join(BASE_DIR, f"{name}.txt"),
+            os.path.join(os.path.dirname(BASE_DIR), f"{name}.txt"),
+            os.path.join(BASE_DIR, name, "network1_config.cfg"),
+            os.path.join(BASE_DIR, name, "env.txt"),
+            os.path.join(os.path.dirname(BASE_DIR), name, "network1_config.cfg"),
+            os.path.join(os.path.dirname(BASE_DIR), name, "env.txt")
+        ]
+        for cpath in candidates:
+            if os.path.isfile(cpath):
+                try:
+                    with open(cpath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        # Match IFACE_IP1: 10.10.10.x
+                        m_txt = re.search(r"IFACE_IP1\s*:\s*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", content)
+                        if m_txt:
+                            ip_address = m_txt.group(1)
+                            break
+                        # Match addresses: - 10.10.10.x/24
+                        m_yaml = re.search(r"-\s*(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/\d+", content)
+                        if m_yaml:
+                            ip_address = m_yaml.group(1)
+                            break
+                except Exception:
+                    pass
 
     # 3. Get VNC display
     vnc_port = None
