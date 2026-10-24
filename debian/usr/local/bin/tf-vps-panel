@@ -1,0 +1,57 @@
+#!/bin/bash
+# ==============================================================
+# CloudLab VPS Hypervisor - CLI Management Tool
+# ==============================================================
+
+set -e
+
+ACTION="${1:-status}"
+
+case "$ACTION" in
+    status)
+        echo "=================================================="
+        echo "📊 CloudLab VPS Hypervisor Status"
+        echo "=================================================="
+        systemctl status tf-vps-panel.service --no-pager || true
+        echo ""
+        echo "--- Libvirt Status ---"
+        virsh version 2>/dev/null || echo "Libvirt is starting or not ready."
+        echo ""
+        echo "--- Active Storage Pools ---"
+        virsh pool-list --all 2>/dev/null || true
+        echo ""
+        echo "--- Active Virtual Networks ---"
+        virsh net-list --all 2>/dev/null || true
+        echo ""
+        echo "--- Virtual Machines ---"
+        virsh list --all 2>/dev/null || true
+        echo "=================================================="
+        ;;
+    start)
+        echo "Starting CloudLab VPS Dashboard service..."
+        systemctl start tf-vps-panel.service
+        echo "Started."
+        ;;
+    stop)
+        echo "Stopping CloudLab VPS Dashboard service..."
+        systemctl stop tf-vps-panel.service
+        echo "Stopped."
+        ;;
+    restart)
+        echo "Restarting CloudLab VPS Dashboard service..."
+        systemctl restart tf-vps-panel.service
+        echo "Restarted."
+        ;;
+    logs)
+        journalctl -u tf-vps-panel.service -f -n 50
+        ;;
+    reset-password)
+        NEW_PASS="${2:-admin123}"
+        python3 /opt/tf-vps-panel/server.py reset-password admin "$NEW_PASS"
+        echo "Admin password has been reset to: $NEW_PASS"
+        ;;
+    *)
+        echo "Usage: tf-vps-panel {status|start|stop|restart|logs|reset-password [new_password]}"
+        exit 1
+        ;;
+esac

@@ -1,0 +1,8 @@
+<network>
+  <name>net-10.10.10</name>
+  <forward mode='route'/>
+  <bridge name='virbr10' stp='on' delay='0'/>
+  <domain name='network'/>
+  <ip address='10.10.10.1' netmask='255.255.255.0'>
+  </ip>
+</network>

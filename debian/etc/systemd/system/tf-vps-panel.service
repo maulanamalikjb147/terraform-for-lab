@@ -1,0 +1,18 @@
+[Unit]
+Description=CloudLab VPS Hypervisor Dashboard & Provisioner
+After=network.target libvirtd.service
+Wants=libvirtd.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/tf-vps-panel
+ExecStart=/usr/bin/python3 /opt/tf-vps-panel/server.py --port 8080
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

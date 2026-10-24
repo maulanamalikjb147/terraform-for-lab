@@ -1,0 +1,8 @@
+#!/bin/bash
+set -e
+
+# Stop and disable service before package removal
+systemctl stop tf-vps-panel.service 2>/dev/null || true
+systemctl disable tf-vps-panel.service 2>/dev/null || true
+
+exit 0

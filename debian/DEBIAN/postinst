@@ -1,0 +1,149 @@
+#!/bin/bash
+# ==============================================================
+# CloudLab VPS Hypervisor - Automated Installation & Setup (postinst)
+# Fully automates README.md setup steps during dpkg install
+# ==============================================================
+
+set -e
+
+echo ""
+echo "================================================================"
+echo "🚀 Configuring CloudLab VPS Hypervisor & Provisioning System..."
+echo "================================================================"
+
+# 1. Enable Nested Virtualization
+echo "[1/8] Configuring KVM nested virtualization..."
+cat <<'EOF' > /etc/modprobe.d/kvm.conf
+options kvm_intel nested=1
+options kvm_amd nested=1
+EOF
+
+modprobe -r kvm_intel 2>/dev/null || true
+modprobe kvm_intel nested=1 2>/dev/null || true
+modprobe -r kvm_amd 2>/dev/null || true
+modprobe kvm_amd nested=1 2>/dev/null || true
+
+# 2. Fix QEMU security driver
+echo "[2/8] Setting QEMU security driver configuration..."
+if [ -f /etc/libvirt/qemu.conf ]; then
+    sed -i -r 's/#?security_driver.*/security_driver = "none"/' /etc/libvirt/qemu.conf
+fi
+
+# 3. Enable & start Libvirtd
+echo "[3/8] Starting and enabling libvirtd service..."
+systemctl enable --now libvirtd 2>/dev/null || systemctl enable --now libvirt-bin 2>/dev/null || true
+systemctl restart libvirtd 2>/dev/null || true
+
+# 4. Setup Terraform CLI if not present
+echo "[4/8] Verifying Terraform binary..."
+if ! command -v terraform >/dev/null 2>&1; then
+    echo "Terraform not found in PATH. Downloading Terraform 0.13.7 (linux_amd64)..."
+    TMP_TF_ZIP="/tmp/terraform_0.13.7_linux_amd64.zip"
+    wget -q -O "$TMP_TF_ZIP" https://releases.hashicorp.com/terraform/0.13.7/terraform_0.13.7_linux_amd64.zip || \
+    curl -s -L -o "$TMP_TF_ZIP" https://releases.hashicorp.com/terraform/0.13.7/terraform_0.13.7_linux_amd64.zip || true
+    
+    if [ -f "$TMP_TF_ZIP" ]; then
+        unzip -q -o "$TMP_TF_ZIP" -d /usr/local/bin/ || true
+        chmod +x /usr/local/bin/terraform || true
+        rm -f "$TMP_TF_ZIP"
+        echo "Terraform installed to /usr/local/bin/terraform."
+    fi
+else
+    echo "Terraform is already available: $(terraform -v | head -n 1)"
+fi
+
+# 5. Setup Libvirt Terraform Provider
+echo "[5/8] Setting up Terraform Libvirt Provider..."
+PROVIDER_SRC="/opt/tf-vps-panel/provider/terraform-provider-libvirt"
+PROVIDER_DEST_DIR="/root/.local/share/terraform/plugins/registry.terraform.io/dmacvicar/libvirt/0.6.2/linux_amd64"
+mkdir -p "$PROVIDER_DEST_DIR"
+
+if [ -f "$PROVIDER_SRC" ]; then
+    cp -f "$PROVIDER_SRC" "$PROVIDER_DEST_DIR/terraform-provider-libvirt"
+    chmod +x "$PROVIDER_DEST_DIR/terraform-provider-libvirt"
+    echo "Terraform Libvirt provider registered successfully."
+fi
+
+# 6. Setup Storage Pools (/data/vms and /data/isos)
+echo "[6/8] Initializing KVM storage pools..."
+mkdir -p /data/isos /data/vms
+chmod 755 /data/isos /data/vms
+
+# Define and start pools in libvirt
+virsh pool-define-as vms dir - - - - "/data/vms" 2>/dev/null || true
+virsh pool-define-as isos dir - - - - "/data/isos" 2>/dev/null || true
+virsh pool-autostart vms 2>/dev/null || true
+virsh pool-autostart isos 2>/dev/null || true
+virsh pool-start vms 2>/dev/null || true
+virsh pool-start isos 2>/dev/null || true
+
+# 7. Setup Virtual Network (net-10.10.10) & IPTables NAT
+echo "[7/8] Configuring virtual network (net-10.10.10) & NAT masquerade..."
+NET_XML="/opt/tf-vps-panel/config/net-10-10-10.xml"
+if [ -f "$NET_XML" ]; then
+    virsh net-define "$NET_XML" 2>/dev/null || true
+    virsh net-autostart net-10.10.10 2>/dev/null || true
+    virsh net-start net-10.10.10 2>/dev/null || true
+fi
+
+# Enable IPv4 forwarding
+sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/99-kvm-forward.conf
+
+# Detect default egress interface (e.g. ens4, eth0)
+DEFAULT_IFACE=$(ip route show default 2>/dev/null | awk '{print $5}' | head -n1)
+if [ -z "$DEFAULT_IFACE" ]; then
+    DEFAULT_IFACE="ens4"
+fi
+
+iptables -t nat -C POSTROUTING -s 10.10.10.0/24 -j MASQUERADE 2>/dev/null || \
+iptables -t nat -A POSTROUTING -s 10.10.10.0/24 -j MASQUERADE 2>/dev/null || true
+
+# Save persistent rules if netfilter-persistent is available
+if command -v netfilter-persistent >/dev/null 2>&1; then
+    netfilter-persistent save >/dev/null 2>&1 || true
+fi
+
+# 8. Setup Permissions & Enable Dashboard Service
+echo "[8/8] Starting CloudLab VPS Dashboard service..."
+chmod +x /opt/tf-vps-panel/server.py
+chmod +x /usr/local/bin/tf-vps-panel
+chmod -R 755 /opt/tf-vps-panel/static
+
+cp -f /opt/tf-vps-panel/tf-vps-panel.service /etc/systemd/system/tf-vps-panel.service 2>/dev/null || true
+systemctl daemon-reload
+systemctl enable --now tf-vps-panel.service 2>/dev/null || true
+
+# Get Server Host IP
+SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+if [ -z "$SERVER_IP" ]; then
+    SERVER_IP="YOUR_SERVER_IP"
+fi
+
+echo ""
+echo "================================================================"
+echo "🎉 CloudLab VPS Hypervisor Installation Completed Successfully!"
+echo "================================================================"
+echo ""
+echo "🌐 Access Your VPS Dashboard in Web Browser:"
+echo "   👉 http://${SERVER_IP}:8080/"
+echo ""
+echo "🔑 Administrator Credentials:"
+echo "   Username: admin"
+echo "   Password: admin123"
+echo "   (You can change password in Settings or via 'tf-vps-panel reset-password')"
+echo ""
+echo "⚡ Quick Management Commands:"
+echo "   tf-vps-panel status          # View status of hypervisor & VMs"
+echo "   tf-vps-panel restart         # Restart dashboard web service"
+echo "   tf-vps-panel logs            # Follow real-time dashboard logs"
+echo "   tf-vps-panel reset-password  # Reset admin password"
+echo ""
+echo "💡 To download Ubuntu 22.04 base cloud image:"
+echo "   Open the dashboard -> 'Storage & ISOs' -> Click 'Download Image'"
+echo "   or run:"
+echo "   curl -L -o /data/isos/ubuntu-jammy.img https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+echo "================================================================"
+echo ""
+
+exit 0

@@ -1,0 +1,12 @@
+Package: tf-vps-panel
+Version: 1.0.0
+Section: admin
+Priority: optional
+Architecture: amd64
+Maintainer: Maulana Malik <admin@homelab.local>
+Depends: bridge-utils, cpu-checker, libvirt-clients, libvirt-daemon, qemu, qemu-kvm, libvirt-daemon-system, genisoimage | mkisofs, gawk, iptables, iptables-persistent, python3 (>= 3.8), wget, curl, unzip, tar, libguestfs-tools
+Description: CloudLab VPS Hypervisor & Provisioning Control Panel
+ A modern VPS hosting control panel and automated KVM hypervisor provisioner
+ powered by Terraform and Libvirt. Automatically configures nested KVM,
+ storage pools, network bridge, iptables NAT forwarding and runs a sleek
+ web dashboard with admin authentication for 1-click VM creation.

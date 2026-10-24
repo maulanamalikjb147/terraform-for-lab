@@ -1,0 +1,36 @@
+# Debian Packages
+*.deb
+
+# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# Dashboard Runtime Data
+dashboard/instances/
+dashboard/config/users.json
+dashboard/config/instances_meta.json
+dashboard/config/jobs.json
+
+# Graphify Output
+graphify-out/
+
+# Terraform Runtime Artifacts
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
